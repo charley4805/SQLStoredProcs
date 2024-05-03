@@ -1,0 +1,156 @@
+-- =============================================
+-- Author:		Chris Harley
+-- Create date: 04/13/2022
+-- Description:	Gets Events By TEXT AppUserId AND
+-- ClientAccount_id, ClientOrg_id, OR ClientTeam_id
+-- Test run:	[dbo].[EventSearch] 1, 1, NULL, NULL,1, 1, 0, 0, NULL, 1,5
+-- =============================================
+CREATE PROCEDURE [dbo].[EventSearch]
+(
+	@AppUserId			INT,
+	@ClientAccountId	INT = NULL,
+	@ClientOrgId		INT = NULL,
+	@ClientTeamId		INT = NULL,
+	@Filter				INT = 1,
+	@SortBy				INT = 1,
+	@Desc				BIT = 0,
+	@IncludeArchived	BIT = 0,
+	@SearchText	        VARCHAR(150),
+	@PageNumber         INT, 
+	@PageSize           INT
+)
+AS
+BEGIN
+
+	--Set default Filter to 1(Upcoming) if NULL or 0
+	IF ( ISNULL(@Filter, 0) = 0)
+	BEGIN
+		
+		SET @Filter = 1
+
+	END
+
+	--Set default PageSize if NULL or 0
+	IF ( ISNULL(@PageSize, 0) = 0)
+	BEGIN
+		
+		SET @PageSize = 10
+
+	END
+
+	DECLARE @TotalPageCount INT = 1,
+		@TotalEventCount INT = 1,
+		@Now DATE = GETDATE();
+
+	DECLARE @Events TABLE ([ClientAccount_id] INT, [ClientAccountName] VARCHAR(500), [ClientOrg_id] INT, [ClientOrgName] VARCHAR(500), [ClientTeam_id] INT, [ClientTeamName] VARCHAR(500), [Event_id] INT, [EventType_id] INT, [EventType] VARCHAR(100), [EventTitle] VARCHAR(1000), [EventDescription] VARCHAR(5000), [EventInternalDescription] VARCHAR(1000),
+		[EventVolunteerInstructions] VARCHAR(5000), [EventAllowGroups] BIT, [EventThumbnail] VARBINARY(MAX), [EventShiftDateMin] DATE, [EventShiftDateMax] DATE, [EventVolunteerCount] INT, [EventMaxVolunteerCount] INT, [LastUpdatedDate] DATETIMEOFFSET(3), [LastUpdatedBy] INT, [LastUpdatedByName] VARCHAR(201), [CreatedDate] DATETIME, [CreatedByUser] INT,
+		[CreatedByUserName] VARCHAR(201), [CreatedByClientTeam] INT, [CreatedByClientTeamName] VARCHAR(500),InternalTeamDescription VARCHAR(1000), VolunteerDescription VARCHAR(1000), [IsPrivate] BIT, PublishLaterActive BIT, PublishLaterDate DATETIMEOFFSET(3), SignUpWindowActive BIT, SignUpWindowStartDate DATETIMEOFFSET(3),SignUpWindowEndDate DATETIMEOFFSET(3), [Status] INT, [IsActive] BIT)
+
+	INSERT INTO @Events
+		SELECT AUE.*
+		FROM [dbo].[AppUserEvents](@AppUserId, NULL, @ClientAccountId, @ClientOrgId, @ClientTeamId) AUE
+		JOIN [dbo].[Event] E (NOLOCK)
+			ON AUE.[Event_id] = E.[Event_id]
+			AND ISNULL(E.[IsArchived], 0) = CASE WHEN @IncludeArchived = 1 THEN ISNULL(E.[IsArchived], 0) ELSE 0 END
+			AND (@SearchText IS NULL
+				OR (EventName LIKE '%' + @SearchText + '%' or E.Title LIKE '%' + @SearchText + '%' 
+				OR E.[Description] LIKE '%' + @SearchText + '%' OR E.[InternalDescription] LIKE '%' + @SearchText + '%' or E.VolunteerInstructions LIKE '%' + @SearchText + '%' ))
+		WHERE ((@Now <= CASE WHEN @Filter = 1 THEN ISNULL(AUE.[EventShiftDateMax], @Now) ELSE @Now END --Filter to Events with upcoming Shifts, or events that haven't had Shifts set up
+					AND @Now >= CASE WHEN @Filter = 2 THEN AUE.[EventShiftDateMax] ELSE @Now END) --Filter to Events with Shifts that have all ended
+				OR @Filter = 3) --Show all Events
+				
+	SET @TotalEventCount = (SELECT COUNT([Event_id]) FROM @Events);
+	SET @TotalPageCount = (SELECT CEILING(COUNT([Event_id])/CAST(@PageSize AS FLOAT)) FROM @Events);
+	
+	--Set Minimum TotalPageCount
+	IF (@TotalPageCount = 0)
+	BEGIN
+
+		SET @TotalPageCount = 1
+
+	END
+
+	--Set max PageNumer to TotalPageCount
+	IF (@PageNumber > @TotalPageCount
+		OR @PageNumber = 0)
+	BEGIN
+		
+		SET @PageNumber = @TotalPageCount
+
+	END
+
+	SELECT 
+		CASE WHEN ISNULL(@ClientAccountId, 0) = 0 OR ISNULL(@ClientOrgId, 0) = 0 OR ISNULL(@ClientTeamId, 0) = 0 THEN 1 -- My Events
+			WHEN @ClientAccountId > 0 OR @ClientOrgId > 0 OR @ClientTeamId > 0 THEN 0 --All Events
+			END AS [Tab],
+		@Filter AS [Filter],
+		@SortBy AS [SortBy],
+		@Desc AS [Desc],
+		@IncludeArchived AS [IncludeArchived],
+		@PageNumber AS [PageNumber],
+		@PageSize AS [PageSize],
+		@TotalPageCount AS [TotalPageCount],
+		@TotalEventCount AS [TotalEventCount]
+
+	SELECT [ClientAccount_id],
+		[ClientAccountName],
+		[ClientOrg_id],
+		[ClientOrgName],
+		[ClientTeam_id],
+		[ClientTeamName],
+		[Event_id],
+		[EventType_id],
+		[EventType],
+		[EventTitle],
+		[EventDescription],
+		[EventInternalDescription],
+		[EventVolunteerInstructions],
+		[EventAllowGroups],
+		[EventThumbnail],
+		[EventShiftDateMin],
+		[EventShiftDateMax],
+		[EventVolunteerCount],
+		[EventMaxVolunteerCount],
+		[LastUpdatedDate],
+		[LastUpdatedBy],
+		[LastUpdatedByName],
+		[CreatedDate],
+		[CreatedByUser],
+		[CreatedByUserName],
+		[CreatedByClientTeam],
+		[CreatedByClientTeamName],
+		[InternalTeamDescription],
+		[VolunteerDescription],
+		[IsPrivate],
+		[PublishLaterActive],
+		[PublishLaterDate],
+		[SignUpWindowActive],
+		[SignUpWindowStartDate],
+		[SignUpWindowEndDate],
+		[Status],
+		[IsActive]
+	FROM @Events
+	ORDER BY
+		(CASE WHEN @Desc = 1 THEN
+			CASE WHEN @SortBy = 1 THEN [EventTitle]
+					WHEN @SortBy = 2 THEN CAST([EventShiftDateMin] AS VARCHAR(100))
+					WHEN @SortBy = 3 THEN [EventType]
+					WHEN @SortBy = 4 THEN [CreatedByUserName]
+					--WHEN @SortBy = 5 THEN E.Restrictions --OUT OF SCOPE
+					ELSE CAST([EventShiftDateMin] AS VARCHAR(100))
+			END
+		END) DESC,
+		(CASE WHEN @Desc = 0 THEN
+			CASE WHEN @SortBy = 1 THEN [EventTitle]
+					WHEN @SortBy = 2 THEN CAST([EventShiftDateMin] AS VARCHAR(100))
+					WHEN @SortBy = 3 THEN [EventType]
+					WHEN @SortBy = 4 THEN [CreatedByUserName]
+					--WHEN @SortBy = 5 THEN E.Restrictions --OUT OF SCOPE
+					ELSE CAST([EventShiftDateMin] AS VARCHAR(100))
+			END
+			END) ASC,
+		[EventTitle] ASC --Third sort column to sort any NULL value sort columns by Title
+	OFFSET (@PageSize * (@PageNumber - 1)) ROWS
+	FETCH NEXT @PageSize ROWS ONLY;
+
+END
