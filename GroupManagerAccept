@@ -1,0 +1,29 @@
+-- =============================================
+-- Author:		Chris Harley
+-- Create date: 02/028/2022
+-- Description:	Sets Approved Flag GroupMembership
+-- record
+-- =============================================
+CREATE PROCEDURE [dbo].[GroupManagerMemberJoinAccept]
+(
+	@GroupCoordinatorVolunteerId INT,
+	@VolunteerId INT,
+	@GroupId INT
+)
+as
+BEGIN
+	SET NOCOUNT OFF
+	   -- If records exist in group coordinator table for GroupId and Volunteer ID
+    IF ([dbo].[CheckGroupManager] (@GroupCoordinatorVolunteerId, @GroupId, NULL) = 1)
+
+   BEGIN
+	UPDATE GroupMembership
+	SET Approved = 1,
+		ApprovedDate = GETDATE(),
+		LastUpdatedByVolunteer_id = @GroupCoordinatorVolunteerId,
+		LastUpdateTime = GETDATE()
+
+	WHERE Volunteer_id = @VolunteerId
+		AND Group_id = @GroupId
+   END
+END
