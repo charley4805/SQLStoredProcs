@@ -1,0 +1,113 @@
+-- =============================================
+-- Author:		Chris Harley
+-- Create date: 06/21/2022
+-- Description:	Gets List of Volunteers By Search Text AppUserId and
+-- ClientAccount_id OR ClientOrg_id OR ClientTeam_id
+-- Test run:	[dbo].[VolunteerSearch] 1, 1, NULL, NULL,null, 1, 0, 0, 1,8
+-- =============================================
+CREATE PROCEDURE [dbo].[VolunteerSearch]
+(
+	@AppUserId			INT,
+	@EventId			INT,
+	@ClientAccountId	INT = NULL,
+	@ClientOrgId		INT = NULL,
+	@ClientTeamId		INT = NULL,
+	@SearchText	        VARCHAR(150),
+	@SortBy				INT = 1,
+	@Desc				BIT = 0,
+	@IncludeArchived	BIT = 0,
+	@PageNumber         INT = 1, 
+	@PageSize           INT = 10
+)
+AS
+BEGIN
+
+
+--Set default PageSize if NULL or 0
+	IF ( ISNULL(@PageSize, 0) = 0)
+	BEGIN
+		
+		SET @PageSize = 10
+
+	END
+
+	DECLARE @TotalPageCount INT = 1,
+		@TotalCount INT = 0,
+		@Now DATE = GETDATE();
+
+	DECLARE @Volunteers TABLE ([Volunteer_id] INT, [FirstName] VARCHAR(100), [LastName] VARCHAR(100), [EmailAddress] VARCHAR(50), [IsActive] Bit)
+	
+	   -- Pulls List of Volunteers
+
+    INSERT INTO @Volunteers
+	SELECT DISTINCT
+	        V.Volunteer_id,
+			V.FirstName,
+			V.LastName,
+			V.EmailAddress,
+			CASE WHEN (EV.IsActive = 0 OR V.[IsActive] = 0) THEN 0 ELSE 1 END AS [IsActive]
+	FROM [dbo].[AppUserEvents](@AppUserId, @EventId, @ClientAccountId, @ClientOrgId, @ClientTeamId) AUE
+	JOIN [dbo].[EventVolunteer] EV (NOLOCK)
+		ON AUE.Event_id = EV.Event_id
+	JOIN [dbo].[Volunteer] V (NOLOCK)
+		ON EV.[Volunteer_id] = V.[Volunteer_id]
+	WHERE AUE.Event_id = @EventId
+		AND (ISNULL(@SearchText, '') = ''
+			OR (V.[FirstName] + ' ' + V.[LastName] LIKE '%' + @SearchText + '%'))
+		AND (@IncludeArchived = 1
+			OR (EV.[IsActive] = 1 AND V.[IsActive] = 1))
+
+	SET @TotalCount = (SELECT COUNT([Volunteer_id]) FROM @Volunteers);
+	SET @TotalPageCount = (SELECT CEILING(COUNT([Volunteer_id])/CAST(@PageSize AS FLOAT)) FROM @Volunteers);
+	
+	--Set Minimum TotalPageCount
+	IF (@TotalPageCount = 0)
+	BEGIN
+
+		SET @TotalPageCount = 1
+
+	END
+
+	--Set max PageNumer to TotalPageCount
+	IF (@PageNumber > @TotalPageCount
+		OR @PageNumber = 0)
+	BEGIN
+		
+		SET @PageNumber = @TotalPageCount
+
+	END
+
+
+	SELECT 
+		@SortBy AS [SortBy],
+		@Desc AS [Desc],
+		@IncludeArchived AS [IncludeArchived],
+		@PageNumber AS [PageNumber],
+		@PageSize AS [PageSize],
+		@TotalPageCount AS [TotalPageCount],
+		@TotalCount AS [TotalVolunteerCount]
+
+	SELECT 
+		[Volunteer_id],
+		[FirstName],
+		[LastName],
+		[EmailAddress],
+		[IsActive]
+	FROM @Volunteers 
+	ORDER BY
+	(CASE WHEN @Desc = 1 THEN
+		CASE WHEN @SortBy = 1 THEN [FirstName]
+		WHEN @SortBy = 2 THEN [LastName]
+		WHEN @SortBy = 3 THEN [EmailAddress]
+		END
+	END) DESC,
+	(CASE WHEN @Desc = 0 THEN
+		CASE WHEN @SortBy = 1 THEN [FirstName]
+		WHEN @SortBy = 2 THEN [LastName]
+		WHEN @SortBy = 3 THEN [EmailAddress]
+		END
+		END) ASC
+	OFFSET (@PageSize * (@PageNumber - 1)) ROWS
+	FETCH NEXT @PageSize ROWS ONLY;
+
+END
