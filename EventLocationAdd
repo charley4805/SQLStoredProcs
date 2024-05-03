@@ -1,0 +1,91 @@
+-- =============================================
+-- Author:		Chris Harley
+-- Create date: 04/18/2022
+-- Description:	Adds Events Locations Or Updates if Location_Id Exists
+-- Test run:	[dbo].[EventLocationAdd] 1, 2, 48881, TestADDLoc,'TEST NOTES', 'Address 1', 'Address 2', 'Woodstock', 'Ga', '30118', null, null
+--				[dbo].[EventLocationAdd] 1, 1, null, TestADDLoc,'TEST 2 NOTES', 'Address 1', 'Address 2', 'Woodstock', 'Ga', '30118', null, null
+--				[dbo].[EventLocationAdd] 1, 1, null, TestADDLoc,'TEST 2 NOTES', 'Address 1', 'Address 2', 'Woodstock', 'Ga', '30118', null, null
+-- =============================================
+CREATE PROCEDURE [dbo].[EventLocationAdd]
+(
+	@AppUserId		INT,
+	@EventId		INT = NULL,
+	@LocationId		INT = NULL,
+	@LocationName	VARCHAR(500),
+	@Notes          VARCHAR(5000) = NULL,
+	@AddressLine1       VARCHAR(250), 
+	@AddressLine2		VARCHAR(100) = NULL,
+	@City           VARCHAR(100),
+	@State          VARCHAR(2),
+	@Zip            VARCHAR(10),
+	@Latitude       DECIMAL = NULL,
+	@Longitude      DECIMAL = NULL
+)
+as
+BEGIN
+	SET NOCOUNT ON
+
+	IF EXISTS (SELECT [Location_Id]
+		FROM [Location]
+		WHERE [Location_id] = @LocationId
+			OR (
+				[AddressLine1] = @AddressLine1
+				AND ISNULL([AddressLine2], '') = ISNULL(@AddressLine2, '')
+				AND [City] = @City
+				AND [State] = @State
+				AND [Zip] = @Zip
+			))
+	BEGIN 
+
+		DECLARE @ExistLocationId int = null
+
+		SET @ExistLocationId = (
+			SELECT TOP (1) [Location_Id] FROM [Location]
+			WHERE [Location_id] = @LocationId
+				OR (
+					[AddressLine1] = @AddressLine1
+					AND ISNULL([AddressLine2], '') = ISNULL(@AddressLine2, '')
+					AND [City] = @City
+					AND [State] = @State
+					AND [Zip] = @Zip
+				)
+			)
+
+		IF NOT EXISTS (SELECT [EventLocation_id] FROM [dbo].[EventLocation] WHERE [Event_id] = @EventId AND [Location_id] = @ExistLocationId AND [IsActive] = 1)
+		BEGIN
+
+			SET NOCOUNT OFF
+		
+			INSERT INTO EventLocation ( [Event_id], [Location_id], [Notes], [IsActive] )
+			VALUES (@EventId, @ExistLocationId, @Notes, 1)
+
+		END
+
+	 END
+
+	 ELSE
+	 BEGIN
+		
+		INSERT INTO [Location] ([Client_id], [LocationName],[AddressLine1],[AddressLine2], [City],[State],[Zip],[Latitude],[Longitude])
+		VALUES 
+		(
+			0,
+			@LocationName,
+			@AddressLine1,
+			@AddressLine2,
+			@City,
+			@State,
+			@Zip,
+			@Latitude,
+			@Longitude
+		)
+
+		SET @LocationId = (CASE WHEN @@ROWCOUNT > 0 THEN SCOPE_IDENTITY() ELSE 0 END)
+		
+		SET NOCOUNT OFF
+		
+		INSERT INTO EventLocation ( [Event_id], [Location_id], [Notes], [IsActive] )
+		VALUES (@EventId, @LocationId, @Notes, 1)
+
+	END 
+END
