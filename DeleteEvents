@@ -1,0 +1,23 @@
+-- =============================================
+-- Author:		Chris Harley
+-- Create date: 04/18/2022
+-- Description:	Deletes Events 
+-- Test run:	[dbo].[EventLocationAdd] 1, 2
+-- =============================================
+CREATE PROCEDURE [dbo].[EventDelete]
+(
+	@AppUserId			INT,
+	@EventId	INT = NULL
+)
+as
+BEGIN
+ SET NOCOUNT OFF
+
+	UPDATE EVENT
+	SET DeletedDate = GETDATE(),
+	    DeletedBy = @AppUserId,
+		IsActive = 0,
+		IsArchived = 1
+	WHERE Event_id = @EventId
+
+END
