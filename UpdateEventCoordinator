@@ -1,0 +1,51 @@
+-- =============================================
+-- Author:		Chris Harley	
+-- Create date: 05/017/2022
+-- Description:	Updates Event Coordinators info
+-- Test run:	[dbo].[EventCoordinatorUpdate] 1, 2, 'Chris', 'Doe', 'CD@Gmail.com', '8678778888', 'Testing Notes', 1, 1, 1, 1, '123 Test Dr', 'Woodstock','GA', 1
+-- =============================================
+CREATE PROCEDURE [dbo].[EventCoordinatorUpdate]
+(
+	@AppUserId			INT,
+	@EventCoordinator_id INT,
+	@EventId	INT = NULL,
+	@FirstName  Varchar(100),
+	@LastName  Varchar(100),
+	@EmailAddress VARCHAR(255),
+	@MobilePhone VARCHAR(20),
+	@Notes VARCHAR(5000),
+	@IsAdmin Bit,
+	@CanEdit Bit,
+	@CanDelete Bit,
+	@IsActive Bit,
+	@AddressLine1 VARCHAR(100),
+	@City VARCHAR(100),
+	@State VARCHAR(100),
+	@Zip VARCHAR(100),
+	@PreferredContactMethod INT
+)
+as
+BEGIN
+ SET NOCOUNT OFF
+
+	Update EventCoordinator
+	Set   Event_id = @EventId,
+	      AppUser_id = @AppUserId,
+	      FirstName = @FirstName,
+		  LastName = @LastName,
+		  EmailAddress = @EmailAddress,
+		  MobilePhone = @MobilePhone,
+		  Notes = @Notes,
+		  IsAdmin = @IsAdmin,
+		  CanEdit = @CanEdit,
+		  CanDelete = @CanDelete,
+		  LastUpdatedBy = @AppUserId,
+		  LastUpdatedDate = GETDATE(),
+          IsActive = 1,
+		  AddressLine1 = @AddressLine1,
+	      City = @City,
+	      [State] = @State,
+	      Zip = @Zip,
+	      PreferredContactMethod = @PreferredContactMethod
+     WHERE EventCoordinator_id = @EventCoordinator_id
+END
