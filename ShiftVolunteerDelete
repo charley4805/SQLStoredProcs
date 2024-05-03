@@ -1,0 +1,31 @@
+-- =============================================
+-- Author:		Chris Harley
+-- Create date: 06/17/2022
+-- Description:	Removes Volunteer From Shift
+-- If the emailaddress has an existing Volunteer
+--
+-- 0: Could not delete the shift, due to permission, an invalid shift number, or unknown error
+-- 1: Succes
+-- Test run:	[dbo].[ShiftDelete] 1, 160
+-- =============================================
+CREATE PROCEDURE [dbo].[ShiftVolunteerDelete]
+(
+	@AppUserId	INT,
+	@ShiftVolunteerId INT
+)
+AS
+BEGIN
+	SET NOCOUNT ON
+
+	DECLARE @ShiftId INT = (SELECT TOP (1) [Shift_id] FROM [dbo].[ShiftVolunteer] WHERE [ShiftVolunteer_id] = @ShiftVolunteerId);
+    IF ((SELECT TOP (1) P.[CanDelete] FROM [EventPermissions]( @AppUserId, NULL, @ShiftId) P) = 1)     
+	  BEGIN
+
+		SET NOCOUNT OFF
+
+			UPDATE TOP (1) [dbo].[ShiftVolunteer]
+				SET [IsActive] = 0
+			WHERE [ShiftVolunteer_id] = @ShiftVolunteerId
+      END
+
+END
