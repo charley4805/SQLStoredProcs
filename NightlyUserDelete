@@ -1,0 +1,40 @@
+-- =============================================
+-- Author: Chris Harley
+-- Create date: 03/012/2023
+-- Description:	Nightly Update For User Data
+-- =============================================
+CREATE Procedure [dbo].[NightlyDeleteUserData]
+AS
+ BEGIN
+ DECLARE @Id AS TABLE(
+       PersonId  UniqueIdentifier,
+       Volunteer_id  INT
+                     )
+    INSERT INTO @Id
+		 SELECT
+		 EV.ExternalId,
+		 D.Volunteer_id
+		 FROM
+		 DataDeletionRequest D (nolock)
+		 LEFT OUTER JOIN ExternalVolunteer EV (NOLOCK) ON D.Volunteer_id = EV.Volunteer_id
+		 WHERE
+		 (DateDiff(day,DateRequested,getdate()) <= 31 AND DateFulfilled IS NULL)
+		 AND
+		 EV.ExternalSystem_id = (SELECT ExternalSystem_id FROM ExternalSystem (NOLOCK) WHERE SystemName = 'Kettle')
+		
+	UPDATE [$(Kettle)].[dbo].[Person]
+	SET  UserName = 'UserTemp', [Password] = 'TempPasword', [FirstName] = 'John', MiddleName = '', LastName = 'Doe', Address1 = '123 Temp rd', Address2 = '', [City] = 'Atlanta', [State] = 'GA', [Zip] = 30000, HomePhone = '1000000000', CellPhone = '2000000000', WorkPhone = '3000000000', EmailAddress = 'temp@temp.com', SSN = '000-00-000', DOB = '01/01/2000'
+	Where PersonId in (SELECT DISTINCT PersonId FROM @Id)
+	UPDATE [$(Kettle)].[dbo].[Income]
+	SET  PersonName = 'TempName'
+	Where PersonId in (SELECT DISTINCT PersonId FROM @Id)
+    UPDATE [$(Volunteer)].[dbo].[ProfileImage]
+    SET ImageFile = null
+    Where Volunteer_id in (SELECT DISTINCT Volunteer_id FROM @Id)
+    UPDATE [$(Volunteer)].[dbo].[Volunteer]
+    SET  EmailAddress = 'Temp@temp.com', [Password] = 'tU7@$_j7u3!@xC', [FirstName] = 'TempName', LastName = 'Doe', AddressLine1 = '123 Temp rd', [City] = 'Atlanta', [State] = 'GA', [Zip] = 30000, [Phone] = '1000000000'
+    Where Volunteer_id in (SELECT DISTINCT Volunteer_id FROM @Id);
+
+	UPDATE DataDeletionRequest SET DateFulfilled = SYSDATETIMEOFFSET() WHERE
+	Volunteer_id in (SELECT DISTINCT Volunteer_id FROM @Id)
+  END
