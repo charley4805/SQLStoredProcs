@@ -1,0 +1,156 @@
+-- =============================================
+-- Author: Chris Harley
+-- Create date: 08/05/2023
+-- Description:	Creates, Parses and sets emails up
+-- in MailQueue when Kettle Coordinator denies a shift request
+-- =============================================
+CREATE PROCEDURE [dbo].[SendDeniedShiftConfirmationEmails]
+	@VolunteerId INT,
+	@LocationShiftDayId INT
+AS
+BEGIN
+	SET NOCOUNT ON
+
+	DECLARE @LocationInfo TABLE ([LocationName] VARCHAR(255), [Address] VARCHAR(50), [City] VARCHAR(50), [State] VARCHAR(2), [Zip] VARCHAR(9), [StartTime] Time, [EndTime] Time, [ShiftDate] DateTimeOffset(3))
+	INSERT INTO @LocationInfo
+		SELECT TOP 1
+			KL.LocationName AS [LocationName],
+			KL.Address1 AS [Address],
+			KL.City,
+			KL.State,
+			KL.Zip,
+			S.StartTime,
+			S.EndTime,
+			LSD.CampaignDay AS [ShiftDate]
+		FROM [$(Kettle)].[dbo].[LocationShiftDay] LSD (NOLOCK)
+		JOIN [$(Kettle)].[dbo].[Shift] S (NOLOCK)
+			ON LSD.ShiftId = S.ShiftId
+		JOIN [$(Kettle)].[dbo].[KettleLocation] KL (NOLOCK)
+			ON LSD.LocationId = KL.LocationId
+		WHERE LSD.LocationShiftDayId = @LocationShiftDayId
+
+	DECLARE @CoordinatorAddress varchar(255) = '',
+			@CoordinatorName varchar (255) = '',
+			@FromAddress varchar(512) = (SELECT COALESCE([ValueOf], 'support@savolunteer.org') FROM [dbo].[SysConfig] (NOLOCK) WHERE Name = 'DefaultSupportEmail'),
+			@VolunteerAddress varchar(1024) = (SELECT TOP (1) EmailAddress FROM [Volunteer] V (NOLOCK) WHERE Volunteer_id = @VolunteerId),
+			@VolunteerName varchar(1024) = (SELECT TOP (1) COALESCE(FirstName, '') + ' ' + COALESCE(LastName, '') FROM [Volunteer] V (NOLOCK) WHERE Volunteer_id = @VolunteerId),
+			@LocationDesc varchar(255) = (SELECT TOP (1) '<strong>' + COALESCE(LocationName, '') + '</strong><br/>' + COALESCE(Address, '') + ' ' + COALESCE(City, '') + ', ' + COALESCE(State, '') + ' ' + COALESCE(Zip, '') FROM @LocationInfo),
+			@ShiftTime varchar(255) = (SELECT TOP (1) LOWER((CONVERT(VarChar(7), StartTime, 0))) + ' - ' + LOWER((CONVERT(VarChar(7), EndTime, 0))) FROM @LocationInfo),
+			@ShiftDate varchar(255) = (SELECT TOP (1)  FORMAT ([ShiftDate], 'dddd, MM/dd/yyyy') FROM @LocationInfo)
+
+	SELECT TOP 1
+		@CoordinatorAddress = CASE 
+			WHEN (COALESCE(U.KettleCoordinatorEmailAddress, '') != '') THEN U.KettleCoordinatorEmailAddress -- Try Unit KettleCoordinatorEmail
+			WHEN (COALESCE(VCU.Email, '') != '') THEN VCU.Email --Try VolunteerCoordinator for Unit Id
+			WHEN (COALESCE(VCUP.EmailAddress, '') != '') THEN VCUP.EmailAddress --Try VolunteerCoordinator for Unit Id
+			WHEN (COALESCE(VCC.Email, '') != '' ) THEN VCC.Email -- Try VolunteerCoordinator for Command Id
+			WHEN (COALESCE(VCCP.EmailAddress, '') != '' ) THEN VCCP.EmailAddress -- Try VolunteerCoordinator for Command Id
+			WHEN (COALESCE(VC2.Email, '') != '') THEN VC2.Email --Try VolunteerCoordinator for Unit Id
+			WHEN (COALESCE(VC2P.EmailAddress, '') != '') THEN VC2P.EmailAddress --Try VolunteerCoordinator for Unit Id
+			ELSE (SELECT COALESCE([ValueOf], 'support@savolunteer.org') FROM [dbo].[SysConfig] (NOLOCK) WHERE Name = 'DefaultSupportEmail') END, -- Go for default Volunteer Coordinator Email
+		@CoordinatorName = CASE 
+			WHEN (COALESCE(U.KettleCoordinatorEmailAddress, '') != '') THEN U.KettleCoordinatorName -- Try Unit KettleCoordinatorName
+			WHEN (COALESCE(VCU.Email, '') != '') THEN VCU.Name --Try VolunteerCoordinator for Unit Id
+			WHEN (COALESCE(VCUP.EmailAddress, '') != '') THEN VCUP.FirstName + ' ' + VCUP.LastName --Try Person linked to VolunteerCoordinator for Unit Id
+			WHEN (COALESCE(VCC.Email, '') != '') THEN VCC.Name -- Try VolunteerCoordinator for Command Id
+			WHEN (COALESCE(VCCP.EmailAddress, '') != '') THEN VCCP.FirstName + ' ' + VCCP.LastName -- Try Person linked to VolunteerCoordinator for Command Id
+			WHEN (COALESCE(VC2.Email, '') != '') THEN COALESCE(VC2.Name, 'Volunteer Support') --Try default Volunteer Coordinator,
+			WHEN (COALESCE(VC2P.EmailAddress, '') != '') THEN VC2P.FirstName + ' ' + VC2P.LastName --Try Person linked to default Volunteer Coordinator,
+			ELSE 'Volunteer Support' END -- Go for default Volunteer Coordinator
+	FROM [$(Kettle)].[dbo].LocationShiftDay LSD
+		LEFT JOIN [$(Kettle)].[dbo].KettleLocation L ON LSD.LocationId = L.LocationId
+		LEFT JOIN [$(Kettle)].[dbo].Unit U ON L.UnitId = U.UnitId
+		LEFT JOIN [$(Kettle)].[dbo].VolunteerCoordinator VCU ON U.UnitId = VCU.Unit_id AND VCU.IsActive = 1
+		LEFT JOIN [$(Kettle)].[dbo].Person VCUP ON VCU.Person_id = VCUP.PersonId AND VCUP.IsActive = 1 --Person record
+		LEFT JOIN [$(Kettle)].[dbo].VolunteerCoordinator VCC ON U.CommandId = VCC.Command_id AND VCC.IsActive = 1
+		LEFT JOIN [$(Kettle)].[dbo].Person VCCP ON VCC.Person_id = VCCP.PersonId AND VCCP.IsActive = 1 --Person record
+		LEFT JOIN [$(Kettle)].[dbo].VolunteerCoordinator VC2 ON VC2.Command_id IS NULL AND VC2.IsActive = 1
+		LEFT JOIN [$(Kettle)].[dbo].Person VC2P ON VC2.Person_id = VC2P.PersonId AND VC2P.IsActive = 1 --Person record
+	WHERE LocationShiftDayId = @LocationShiftDayId
+	ORDER BY VCU.Email, U.KettleCoordinatorEmailAddress, VCC.Email
+
+-- =============================================
+-- Volunteer Email Notification
+-- =============================================
+	SET NOCOUNT OFF;
+
+	INSERT INTO MailQueue ([MailQueueId]
+      ,[FromAddress]
+      ,[ToAddress]
+      ,[ToCC]
+      ,[ToBCC]
+      ,[Subject]
+      ,[Body]
+      ,[QueueDateTime])
+	SELECT
+	NEWID() AS [MailQueueId]
+	,@FromAddress AS [FromAddress]
+	,@VolunteerAddress AS [ToAddress]
+	,NULL AS [ToCC]
+	,NULL AS [ToBCC]
+	,ET.Subject AS [Subject]
+	,REPLACE( --KettleCoordinatorEmail
+		REPLACE( --KettleCoordinatorName
+			REPLACE( --ShiftTime
+				REPLACE( --ShiftDate
+					REPLACE(ET.Body,'@LocationDesc', @LocationDesc),
+				'@ShiftDate', @ShiftDate),
+			'@ShiftTime', @ShiftTime),
+		'@CoordinatorName', @CoordinatorName),
+	'@CoordinatorEmail', @CoordinatorAddress) AS [Body]
+	,GETDATE() AS[QueueDateTime]
+	FROM dbo.EmailTemplate ET
+	WHERE ET.Name = 'VolunteerWeb Shift Denied Notification'
+
+-- =============================================
+-- Group Coordinator Email Notification
+-- Not currently needed. UI Provides enough feedback
+-- =============================================
+
+	----Find appropriate coordinator address
+	--SELECT TOP 1
+	--@CoordinatorAddress = CASE  
+	--WHEN (VCU.Email != '' AND VCU.Email IS NOT NULL) THEN VCC.Email --Try VolunteerCoordinator for Unit Id
+	--WHEN (U.KettleCoordinatorEmailAddress != '' AND U.KettleCoordinatorEmailAddress IS NOT NULL) THEN U.KettleCoordinatorEmailAddress -- Try Unit KettleCoordinatorEmail
+	--WHEN (VCC.Email != '' AND VCC.Email IS NOT NULL) THEN VCC.Email -- Try VolunteerCoordinator for Command Id
+	--ELSE ISNULL(VC2.Email,'tmathis@devnext.net') END -- Go for default Volunteer Coordinator Email, if that is null Send to devnext for checking issue
+	--FROM [$(Kettle)].[dbo].LocationShiftDay LSD
+	--JOIN [$(Kettle)].[dbo].KettleLocation L ON LSD.LocationId = L.LocationId
+	--JOIN [$(Kettle)].[dbo].Unit U ON L.UnitId = U.UnitId
+	--JOIN [$(Kettle)].[dbo].VolunteerCoordinator VCU ON U.UnitId = VCU.Unit_id
+	--JOIN [$(Kettle)].[dbo].VolunteerCoordinator VCC ON U.CommandId = VCC.Command_id
+	--JOIN [$(Kettle)].[dbo].VolunteerCoordinator VC2 ON VC2.Command_id IS NULL
+	--WHERE LocationShiftDayId = @LocationShiftDayId
+	--AND VCU.IsActive = 1 AND VCC.IsActive = 1
+	--ORDER BY VCU.Email, U.KettleCoordinatorEmailAddress, VCC.Email
+
+
+	--INSERT INTO MailQueue ([MailQueueId]
+	--	,[FromAddress]
+	--	,[ToAddress]
+	--	,[ToCC]
+	--	,[ToBCC]
+	--	,[Subject]
+	--	,[Body]
+	--	,[QueueDateTime])
+	--SELECT
+	--	NEWID() AS [MailQueueId]
+	--	,@FromAddress AS [FromAddress]
+	--	,@CoordinatorAddress AS [ToAddress]
+	--	,NULL AS [ToCC]
+	--	,NULL AS [ToBCC]
+	--	,ET.Subject AS [Subject]
+	--	,REPLACE( --VolunteerEmail
+	--		REPLACE( --VolunteerName
+	--			REPLACE( --ShiftTime
+	--				REPLACE( --ShiftDate
+	--					REPLACE(ET.Body,'@ShiftLocation', @LocationName),
+	--				'@ShiftDate', @ShiftDate),
+	--			'@ShiftTime', @ShiftTime),
+	--		'@VolunteerName', @VolunteerName),
+	--	'@VolunteerEmail', @VolunteerAddress)AS [Body]
+	--	,GETDATE() AS[QueueDateTime]
+	--	FROM dbo.EmailTemplate ET
+	--	WHERE ET.Name = 'VolunteerWeb Shift Canceled Notification'
+
+END
